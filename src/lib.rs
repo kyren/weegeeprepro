@@ -182,7 +182,18 @@ impl<'a, F: FileProvider> Preprocessor<'a, F> {
                 },
                 TokenOrDirective::Token(token) => {
                     if false_level == 0 {
-                        write_token(token, &mut self.output);
+                        match token {
+                            t @ Token::Identifier(id) => {
+                                if let Some(val) = self.defines.get(id) {
+                                    write_token(Token::Identifier(val), &mut self.output);
+                                } else {
+                                    write_token(t, &mut self.output);
+                                }
+                            }
+                            token => {
+                                write_token(token, &mut self.output);
+                            }
+                        }
                     }
                 }
             }
@@ -460,6 +471,26 @@ mod tests {
                 struct A {};
                 struct B {};
                 struct D {};
+            "#,
+        ));
+    }
+
+    #[test]
+    fn test_defines() {
+        let files = Files::new(&[(
+            "top",
+            r#"
+                    #define STRUCT_NAME A
+                    struct STRUCT_NAME {};
+                "#,
+        )]);
+
+        let output = preprocess(&files, "top").unwrap();
+        dbg!(&output);
+        assert!(token_equal(
+            &output,
+            r#"
+                struct A {};
             "#,
         ));
     }
