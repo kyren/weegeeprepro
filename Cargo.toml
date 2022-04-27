@@ -1,0 +1,9 @@
+[package]
+name = "weegeeprepro"
+version = "0.1.0"
+edition = "2021"
+license = "MIT-0"
+
+[dependencies]
+thiserror = "1.0"
+unicode-xid = "0.2"
