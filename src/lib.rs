@@ -4,6 +4,7 @@ pub mod tokenizer;
 use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
+    error::Error as StdError,
     fmt,
 };
 
@@ -14,14 +15,27 @@ use self::{
     tokenizer::Token,
 };
 
+pub type ReadError = Box<dyn StdError + Send + Sync>;
+
+#[derive(Debug, Error)]
+pub enum FileError {
+    #[error("no such file")]
+    NoSuchFile,
+    #[error("read error: {0}")]
+    ReadError(ReadError),
+}
+
 pub trait FileProvider {
-    fn get_file(&self, path: &str) -> Option<Cow<'_, str>>;
-    fn canonicalize_path(&self, path: &str) -> String;
+    fn file_contents(&self, path: &str) -> Result<Cow<'_, str>, FileError>;
+
+    fn canonicalize_path(&self, path: &str) -> String {
+        path.to_owned()
+    }
 }
 
 impl<'a, T: FileProvider> FileProvider for &'a T {
-    fn get_file(&self, path: &str) -> Option<Cow<'_, str>> {
-        T::get_file(self, path)
+    fn file_contents(&self, path: &str) -> Result<Cow<'_, str>, FileError> {
+        T::file_contents(self, path)
     }
 
     fn canonicalize_path(&self, path: &str) -> String {
@@ -33,6 +47,8 @@ impl<'a, T: FileProvider> FileProvider for &'a T {
 pub enum Error {
     #[error("no such file '{0}'")]
     NoSuchFile(String),
+    #[error("file '{0}' read error: {1}")]
+    ReadError(String, ReadError),
     #[error("error parsing preprocessor directive: {0}")]
     ParseError(ParseError),
     #[error("#endif found with no matching #if, or missing #endif for an #if")]
@@ -122,10 +138,13 @@ impl<'a, F: FileProvider> Preprocessor<'a, F> {
             return Ok(());
         }
 
-        let file = self
-            .files
-            .get_file(path)
-            .ok_or_else(|| ContextError::new(Error::NoSuchFile(path.to_owned())))?;
+        let file = self.files.file_contents(path).map_err(|e| {
+            let path = path.to_owned();
+            ContextError::new(match e {
+                FileError::NoSuchFile => Error::NoSuchFile(path),
+                FileError::ReadError(e) => Error::ReadError(path, e),
+            })
+        })?;
         let mut parser = DirectiveParser::new(file.as_ref());
 
         while let Some(next) = parser.next().map_err(|e| {
@@ -251,12 +270,10 @@ mod tests {
     }
 
     impl FileProvider for Files {
-        fn get_file(&self, path: &str) -> Option<Cow<'_, str>> {
-            Some(Cow::Borrowed(self.0.get(path)?))
-        }
-
-        fn canonicalize_path(&self, path: &str) -> String {
-            path.to_owned()
+        fn file_contents(&self, path: &str) -> Result<Cow<'_, str>, FileError> {
+            Ok(Cow::Borrowed(
+                self.0.get(path).ok_or(FileError::NoSuchFile)?,
+            ))
         }
     }
 
@@ -290,7 +307,7 @@ mod tests {
         let output = preprocess(&files, "test").unwrap();
         assert!(token_equal(
             &output,
-            files.get_file("test").unwrap().as_ref()
+            files.file_contents("test").unwrap().as_ref()
         ));
     }
 
