@@ -11,8 +11,8 @@ with no strings that can't syntactically have `#` at the beginning of lines, but
 it's primarily meant for --and only tested with-- WGSL.
 
 This is not on crates.io because you should probably not use this until it grows
-up. The very silly name is also meant as a slight disincentive to using it for
-anything important.
+up (if ever). The very silly name is also meant as a slight disincentive to
+using it for anything important.
 
 ## License ##
  
