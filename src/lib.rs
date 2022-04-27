@@ -480,18 +480,25 @@ mod tests {
         let files = Files::new(&[(
             "top",
             r#"
-                    #define STRUCT_NAME A
-                    struct STRUCT_NAME {};
-                "#,
+                #define STRUCT_NAME A
+                struct STRUCT_NAME {};
+            "#,
         )]);
 
         let output = preprocess(&files, "top").unwrap();
-        dbg!(&output);
         assert!(token_equal(
             &output,
             r#"
                 struct A {};
             "#,
         ));
+    }
+
+    #[test]
+    fn test_include_separation() {
+        let files = Files::new(&[("a", "A"), ("b", "#include <a>\nB")]);
+
+        let output = preprocess(&files, "b").unwrap();
+        assert!(token_equal(&output, "A B",));
     }
 }
