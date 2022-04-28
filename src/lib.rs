@@ -2,7 +2,6 @@ pub mod directive_parser;
 pub mod tokenizer;
 
 use std::{
-    borrow::Cow,
     collections::{HashMap, HashSet},
     error::Error as StdError,
     fmt,
@@ -15,40 +14,32 @@ use self::{
     tokenizer::Token,
 };
 
-pub type ReadError = Box<dyn StdError + Send + Sync>;
-
-#[derive(Debug, Error)]
-pub enum FileError {
-    #[error("no such file")]
-    NoSuchFile,
-    #[error("read error: {0}")]
-    ReadError(ReadError),
-}
-
 pub trait FileProvider {
-    fn file_contents(&self, path: &str) -> Result<Cow<'_, str>, FileError>;
+    type Error: StdError;
 
-    fn canonicalize_path(&self, path: &str) -> String {
-        path.to_owned()
+    fn load_file(&mut self, path: &str) -> Result<String, Self::Error>;
+
+    fn canonicalize_path(&self, path: &str) -> Result<String, Self::Error> {
+        Ok(path.to_owned())
     }
 }
 
-impl<'a, T: FileProvider> FileProvider for &'a T {
-    fn file_contents(&self, path: &str) -> Result<Cow<'_, str>, FileError> {
-        T::file_contents(self, path)
+impl<'a, T: FileProvider> FileProvider for &'a mut T {
+    type Error = T::Error;
+
+    fn load_file(&mut self, path: &str) -> Result<String, Self::Error> {
+        T::load_file(self, path)
     }
 
-    fn canonicalize_path(&self, path: &str) -> String {
+    fn canonicalize_path(&self, path: &str) -> Result<String, Self::Error> {
         T::canonicalize_path(self, path)
     }
 }
 
 #[derive(Debug, Error)]
-pub enum Error {
-    #[error("no such file '{0}'")]
-    NoSuchFile(String),
-    #[error("file '{0}' read error: {1}")]
-    ReadError(String, ReadError),
+pub enum Error<E: StdError> {
+    #[error("file '{0}' error: {1}")]
+    FileError(String, E),
     #[error("error parsing preprocessor directive: {0}")]
     ParseError(ParseError),
     #[error("#endif found with no matching #if, or missing #endif for an #if")]
@@ -56,20 +47,20 @@ pub enum Error {
 }
 
 #[derive(Debug, Error)]
-pub struct ContextError {
-    pub error: Error,
+pub struct ContextError<E: StdError> {
+    pub error: Error<E>,
     pub contexts: Vec<ErrorContext>,
 }
 
-impl ContextError {
-    fn new(error: Error) -> Self {
+impl<E: StdError> ContextError<E> {
+    fn new(error: Error<E>) -> Self {
         Self {
             error,
             contexts: Vec::new(),
         }
     }
 
-    fn new_with_context(error: Error, context: ErrorContext) -> Self {
+    fn new_with_context(error: Error<E>, context: ErrorContext) -> Self {
         Self {
             error,
             contexts: vec![context],
@@ -82,7 +73,7 @@ impl ContextError {
     }
 }
 
-impl fmt::Display for ContextError {
+impl<E: StdError> fmt::Display for ContextError<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "preprocessor error: {error}", error = self.error)?;
         for (i, ErrorContext { path, line, column }) in self.contexts.iter().enumerate() {
@@ -104,48 +95,51 @@ pub struct ErrorContext {
     pub column: usize,
 }
 
-pub fn preprocess(files: impl FileProvider, path: &str) -> Result<String, ContextError> {
-    let mut preprocessor = Preprocessor::new(&files);
-    preprocessor.preprocess_file(path)?;
-    Ok(preprocessor.output)
-}
-
-struct Preprocessor<'a, F: FileProvider> {
-    files: &'a F,
-    output: String,
+pub struct Preprocessor<F: FileProvider> {
+    files: F,
     defines: HashMap<String, String>,
     once_paths: HashSet<String>,
+    output: String,
 }
 
-impl<'a, F: FileProvider> Preprocessor<'a, F> {
-    fn new(files: &'a F) -> Self {
+impl<F: FileProvider> Preprocessor<F> {
+    pub fn preprocess(files: F, path: &str) -> Result<String, ContextError<F::Error>> {
+        let mut p = Self::new(files);
+        p.include_file(path)?;
+        Ok(p.finish())
+    }
+
+    pub fn new(files: F) -> Self {
         Self {
             files,
+            defines: HashMap::new(),
+            once_paths: HashSet::new(),
             output: String::new(),
-            defines: Default::default(),
-            once_paths: Default::default(),
         }
     }
 
-    fn preprocess_file(&mut self, path: &str) -> Result<(), ContextError> {
+    pub fn define(&mut self, name: &str, val: &str) {
+        self.defines.insert(name.to_owned(), val.to_owned());
+    }
+
+    pub fn include_file(&mut self, path: &str) -> Result<(), ContextError<F::Error>> {
         let mut if_level = 0;
         let mut false_level = 0;
 
-        if self
-            .once_paths
-            .contains(&self.files.canonicalize_path(path))
-        {
+        if self.once_paths.contains(
+            &self
+                .files
+                .canonicalize_path(path)
+                .map_err(|e| ContextError::new(Error::FileError(path.to_owned(), e)))?,
+        ) {
             return Ok(());
         }
 
-        let file = self.files.file_contents(path).map_err(|e| {
-            let path = path.to_owned();
-            ContextError::new(match e {
-                FileError::NoSuchFile => Error::NoSuchFile(path),
-                FileError::ReadError(e) => Error::ReadError(path, e),
-            })
-        })?;
-        let mut parser = DirectiveParser::new(file.as_ref());
+        let file = self
+            .files
+            .load_file(path)
+            .map_err(|e| ContextError::new(Error::FileError(path.to_owned(), e)))?;
+        let mut parser = DirectiveParser::new(&file);
 
         while let Some(next) = parser.next().map_err(|e| {
             ContextError::new_with_context(Error::ParseError(e), error_context(path, &parser))
@@ -154,7 +148,7 @@ impl<'a, F: FileProvider> Preprocessor<'a, F> {
                 TokenOrDirective::Directive(directive) => match directive {
                     Directive::Include(include_path) => {
                         if false_level == 0 {
-                            if let Err(err) = self.preprocess_file(include_path) {
+                            if let Err(err) = self.include_file(include_path) {
                                 return Err(err.add_context(error_context(path, &parser)));
                             }
                         }
@@ -195,7 +189,13 @@ impl<'a, F: FileProvider> Preprocessor<'a, F> {
                     }
                     Directive::PragmaOnce => {
                         if if_level == 0 {
-                            self.once_paths.insert(self.files.canonicalize_path(path));
+                            self.once_paths
+                                .insert(self.files.canonicalize_path(path).map_err(|e| {
+                                    ContextError::new_with_context(
+                                        Error::FileError(path.to_owned(), e),
+                                        error_context(path, &parser),
+                                    )
+                                })?);
                         }
                     }
                 },
@@ -226,6 +226,10 @@ impl<'a, F: FileProvider> Preprocessor<'a, F> {
         } else {
             Ok(())
         }
+    }
+
+    pub fn finish(self) -> String {
+        self.output
     }
 }
 
@@ -269,11 +273,15 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Error)]
+    #[error("no such file")]
+    struct NoSuchFile;
+
     impl FileProvider for Files {
-        fn file_contents(&self, path: &str) -> Result<Cow<'_, str>, FileError> {
-            Ok(Cow::Borrowed(
-                self.0.get(path).ok_or(FileError::NoSuchFile)?,
-            ))
+        type Error = NoSuchFile;
+
+        fn load_file(&mut self, path: &str) -> Result<String, Self::Error> {
+            Ok(self.0.get(path).ok_or(NoSuchFile)?.clone())
         }
     }
 
@@ -295,7 +303,7 @@ mod tests {
 
     #[test]
     fn no_directives() {
-        let files = Files::new(&[(
+        let mut files = Files::new(&[(
             "test",
             r#"
                 struct Test {
@@ -304,16 +312,13 @@ mod tests {
             "#,
         )]);
 
-        let output = preprocess(&files, "test").unwrap();
-        assert!(token_equal(
-            &output,
-            files.file_contents("test").unwrap().as_ref()
-        ));
+        let output = Preprocessor::preprocess(&mut files, "test").unwrap();
+        assert!(token_equal(&output, &files.load_file("test").unwrap(),));
     }
 
     #[test]
     fn simple_include() {
-        let files = Files::new(&[
+        let mut files = Files::new(&[
             (
                 "a",
                 r#"
@@ -334,7 +339,7 @@ mod tests {
             ),
         ]);
 
-        let output = preprocess(&files, "top").unwrap();
+        let output = Preprocessor::preprocess(&mut files, "top").unwrap();
         assert!(token_equal(
             &output,
             r#"
@@ -351,7 +356,7 @@ mod tests {
 
     #[test]
     fn simple_define() {
-        let files = Files::new(&[(
+        let mut files = Files::new(&[(
             "top",
             r#"
                 #define VAR1
@@ -385,7 +390,7 @@ mod tests {
             "#,
         )]);
 
-        let output = preprocess(&files, "top").unwrap();
+        let output = Preprocessor::preprocess(&mut files, "top").unwrap();
         assert!(token_equal(
             &output,
             r#"
@@ -399,7 +404,7 @@ mod tests {
 
     #[test]
     fn nested_ifs() {
-        let files = Files::new(&[(
+        let mut files = Files::new(&[(
             "top",
             r#"
                 #define VAR1
@@ -429,7 +434,7 @@ mod tests {
             "#,
         )]);
 
-        let output = preprocess(&files, "top").unwrap();
+        let output = Preprocessor::preprocess(&mut files, "top").unwrap();
         assert!(token_equal(
             &output,
             r#"
@@ -443,7 +448,7 @@ mod tests {
 
     #[test]
     fn complex_include() {
-        let files = Files::new(&[
+        let mut files = Files::new(&[
             (
                 "a",
                 r#"
@@ -481,7 +486,7 @@ mod tests {
             ),
         ]);
 
-        let output = preprocess(&files, "d").unwrap();
+        let output = Preprocessor::preprocess(&mut files, "d").unwrap();
         assert!(token_equal(
             &output,
             r#"
@@ -494,7 +499,7 @@ mod tests {
 
     #[test]
     fn test_defines() {
-        let files = Files::new(&[(
+        let mut files = Files::new(&[(
             "top",
             r#"
                 #define STRUCT_NAME A
@@ -502,7 +507,7 @@ mod tests {
             "#,
         )]);
 
-        let output = preprocess(&files, "top").unwrap();
+        let output = Preprocessor::preprocess(&mut files, "top").unwrap();
         assert!(token_equal(
             &output,
             r#"
@@ -513,9 +518,24 @@ mod tests {
 
     #[test]
     fn test_include_separation() {
-        let files = Files::new(&[("a", "A"), ("b", "#include <a>\nB")]);
+        let mut files = Files::new(&[("a", "A"), ("b", "#include <a>\nB")]);
 
-        let output = preprocess(&files, "b").unwrap();
+        let output = Preprocessor::preprocess(&mut files, "b").unwrap();
         assert!(token_equal(&output, "A B",));
+    }
+
+    #[test]
+    fn test_external_defines() {
+        let mut files = Files::new(&[(
+            "top",
+            r#"
+                struct STRUCT_NAME {};
+            "#,
+        )]);
+
+        let mut preprocessor = Preprocessor::new(&mut files);
+        preprocessor.define("STRUCT_NAME", "A");
+        preprocessor.include_file("top").unwrap();
+        assert!(token_equal(&preprocessor.finish(), "struct A {};",));
     }
 }
