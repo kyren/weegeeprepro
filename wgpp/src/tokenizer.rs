@@ -181,7 +181,7 @@ mod tests {
 
     use super::*;
 
-    fn all_tokens<'a>(s: &'a str) -> impl Iterator<Item = Token<'a>> + 'a {
+    fn all_tokens(s: &str) -> impl Iterator<Item = Token<'_>> + '_ {
         let mut tokenizer = Tokenizer::new(s);
         iter::from_fn(move || tokenizer.next())
     }

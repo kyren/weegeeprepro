@@ -104,9 +104,10 @@ impl<'a> DirectiveParser<'a> {
                     )))
                     }
                     None => {
-                        return Err(ParseError(format!(
+                        return Err(ParseError(
                             "unexpected eof following '#', expected preprocessor directive"
-                        )))
+                                .to_string(),
+                        ))
                     }
                 };
                 skip_whitespace(&mut self.tokenizer);
@@ -156,11 +157,13 @@ fn expect_some_identifier<'a>(t: &mut Tokenizer<'a>) -> Result<&'a str, ParseErr
         Some(t) => Err(ParseError(format!(
             "unexpected token {t:?}, expected identifier"
         ))),
-        None => Err(ParseError(format!("unexpected eof, expected identifier"))),
+        None => Err(ParseError(
+            "unexpected eof, expected identifier".to_string(),
+        )),
     }
 }
 
-fn expect_separator<'a>(t: &mut Tokenizer<'a>, sep: char) -> Result<(), ParseError> {
+fn expect_separator(t: &mut Tokenizer, sep: char) -> Result<(), ParseError> {
     match t.peek() {
         Some(Token::Separator(s)) if s == sep => {
             t.next();
@@ -173,7 +176,7 @@ fn expect_separator<'a>(t: &mut Tokenizer<'a>, sep: char) -> Result<(), ParseErr
     }
 }
 
-fn skip_whitespace<'a>(t: &mut Tokenizer<'a>) {
+fn skip_whitespace(t: &mut Tokenizer) {
     while matches!(t.peek(), Some(Token::Whitespace(_))) {
         t.next();
     }
@@ -216,7 +219,7 @@ mod tests {
 
     use super::*;
 
-    fn non_whitespace_parts<'a>(s: &'a str) -> impl Iterator<Item = TokenOrDirective<'a>> + 'a {
+    fn non_whitespace_parts(s: &str) -> impl Iterator<Item = TokenOrDirective<'_>> + '_ {
         let mut parser = DirectiveParser::new(s);
         iter::from_fn(move || loop {
             let p = parser.next().unwrap()?;

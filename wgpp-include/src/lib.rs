@@ -60,9 +60,7 @@ impl Parse for IncludeWgsl {
             }
         }
 
-        let base_path = Path::new(&env::var("CARGO_MANIFEST_DIR").unwrap())
-            .join(shader_root)
-            .to_owned();
+        let base_path = Path::new(&env::var("CARGO_MANIFEST_DIR").unwrap()).join(shader_root);
 
         let mut shader_files = FsFileProvider::new(base_path);
 
@@ -84,7 +82,7 @@ impl Parse for IncludeWgsl {
                     .base_path
                     .join(included_path)
                     .to_str()
-                    .ok_or(input.error("non-utf8 path"))?
+                    .ok_or_else(|| input.error("non-utf8 path"))?
                     .to_owned(),
             );
         }
@@ -130,6 +128,6 @@ impl wgpp::FileProvider for FsFileProvider {
         let mut file = File::open(Path::new(&self.base_path).join(path))?;
         let mut contents = String::new();
         file.read_to_string(&mut contents)?;
-        Ok(contents.into())
+        Ok(contents)
     }
 }

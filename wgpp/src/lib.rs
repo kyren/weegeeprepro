@@ -286,7 +286,7 @@ mod tests {
     }
 
     fn token_equal(a: &str, b: &str) -> bool {
-        fn non_whitespace_tokens<'a>(s: &'a str) -> impl Iterator<Item = Token<'a>> {
+        fn non_whitespace_tokens(s: &str) -> impl Iterator<Item = Token<'_>> {
             let mut tokenizer = Tokenizer::new(s);
             iter::from_fn(move || loop {
                 match tokenizer.next() {
