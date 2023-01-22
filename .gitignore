@@ -1,8 +1,8 @@
 /target
-**/*.rs.bk
 Cargo.lock
 .DS_Store
 .envrc
 .direnv
 shell.nix
-.dir-locals.el
+flake.nix
+flake.lock
