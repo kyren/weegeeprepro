@@ -87,7 +87,7 @@ impl Parse for IncludeWgsl {
             );
         }
 
-        let path = format!("<{}>", includes.join(" + "));
+        let path = format!("<{}>", includes.join("+"));
 
         let module = naga::front::wgsl::parse_str(&content)
             .map_err(|e| input.error(e.emit_to_string_with_path(&content, &path)))?;
