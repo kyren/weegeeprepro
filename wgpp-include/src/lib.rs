@@ -68,9 +68,9 @@ impl Parse for IncludeWgsl {
         for (name, value) in definitions {
             preprocessor.define(&name, value.as_deref().unwrap_or(""));
         }
-        for include in includes {
+        for include in &includes {
             preprocessor
-                .include_file(&include)
+                .include_file(include)
                 .map_err(|e| input.error(e))?;
         }
         let content = preprocessor.finish();
@@ -87,8 +87,17 @@ impl Parse for IncludeWgsl {
             );
         }
 
-        let _ = naga::front::wgsl::parse_str(&content)
-            .map_err(|e| input.error(e.emit_to_string("out.wgsl")))?;
+        let path = format!("<{}>", includes.join(" + "));
+
+        let module = naga::front::wgsl::parse_str(&content)
+            .map_err(|e| input.error(e.emit_to_string_with_path(&content, &path)))?;
+
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .map_err(|e| input.error(e.emit_to_string_with_path(&content, &path)))?;
 
         Ok(IncludeWgsl { sources, content })
     }
