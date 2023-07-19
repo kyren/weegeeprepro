@@ -8,9 +8,9 @@ license.workspace = true
 proc-macro = true
 
 [dependencies]
-syn = { version = "1.0.89" }
-quote = "1.0.17"
-proc-macro2 = "1.0.36"
-naga = { version = "0.11", features = ["validate", "span", "wgsl-in"] }
+syn = { version = "2.0" }
+quote = "1.0"
+proc-macro2 = "1.0"
+naga = { version = "0.12", features = ["validate", "span", "wgsl-in"] }
 
 wgpp = { path = "../wgpp" }
