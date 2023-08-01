@@ -11,6 +11,6 @@ proc-macro = true
 syn = { version = "2.0" }
 quote = "1.0"
 proc-macro2 = "1.0"
-naga = { version = "0.12", features = ["validate", "span", "wgsl-in"] }
+naga = { version = "0.13", features = ["validate", "span", "wgsl-in"] }
 
 wgpp = { path = "../wgpp" }
